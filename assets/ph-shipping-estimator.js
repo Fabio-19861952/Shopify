@@ -4,15 +4,25 @@
  */
 (() => {
   const API_PATH = '/api/2026-07/graphql.json';
-  const MUTATION = [
-    'mutation PetHubShippingQuote($input: CartInput) {',
+  const CREATE_MUTATION = [
+    'mutation PetHubShippingCart($input: CartInput) {',
     ' cartCreate(input: $input) {',
     '  userErrors { message }',
-    '  cart {',
-    '   deliveryGroups(first: 10) { nodes {',
-    '    deliveryOptions { title deliveryMethodType estimatedCost { amount currencyCode } }',
-    '   } }',
-    '  }',
+    '  cart { id }',
+    ' }',
+    '}'
+  ].join(' ');
+
+  // The Collective Carrier Service is a carrier-calculated rate provider.
+  // Shopify hides those rates unless withCarrierRates:true is requested in
+  // an @defer fragment. Source: shopify.dev/docs/storefronts/headless/building-with-the-storefront-api/defer
+  const RATES_QUERY = [
+    'query PetHubShippingRates($id: ID!) {',
+    ' cart(id: $id) { id ... CollectiveRates @defer }',
+    '}',
+    'fragment CollectiveRates on Cart {',
+    ' deliveryGroups(first: 10, withCarrierRates: true) {',
+    '  nodes { deliveryOptions { title deliveryMethodType estimatedCost { amount currencyCode } } }',
     ' }',
     '}'
   ].join(' ');
@@ -100,6 +110,91 @@
       this.results.appendChild(note);
     }
 
+
+    hasRates(groups) {
+      return groups.some((g) => (g.deliveryOptions || []).some(
+        (option) => option.deliveryMethodType === 'SHIPPING' && option.estimatedCost
+      ));
+    }
+
+    async lookupZip(zip, signal) {
+      try {
+        const response = await fetch('https://api.zippopotam.us/us/' + zip, {
+          method: 'GET',
+          credentials: 'omit',
+          signal
+        });
+        if (!response.ok) return null;
+        const result = await response.json();
+        const place = result.places?.[0];
+        if (!place || !place['place name'] || !place['state abbreviation']) return null;
+        return { city: place['place name'], state: place['state abbreviation'] };
+      } catch (error) {
+        if (error.name === 'AbortError') throw error;
+        return null;
+      }
+    }
+
+    async quoteForDestination(input, signal) {
+      const createdPackets = await this.queryStorefront(
+        CREATE_MUTATION, { input }, signal
+      );
+      const created = createdPackets.find((p) => p.data?.cartCreate);
+      if (!created || created.errors?.length ||
+          created.data.cartCreate.userErrors?.length) {
+        throw new Error('Could not create a temporary cart to estimate shipping');
+      }
+      const id = created.data.cartCreate.cart?.id;
+      if (!id) throw new Error('Temporary cart ID missing');
+
+      const packets = await this.queryStorefront(RATES_QUERY, { id }, signal);
+      let groups = [];
+      for (const packet of packets) {
+        if (packet.errors?.length) throw new Error('Shipping rates query failed');
+        if (packet.data?.cart?.deliveryGroups?.nodes) {
+          groups = packet.data.cart.deliveryGroups.nodes;
+        }
+        for (const patch of (packet.incremental || [])) {
+          if (patch.errors?.length) throw new Error('Deferred shipping rate calculation failed');
+          const deferred = patch.data?.deliveryGroups?.nodes ||
+            patch.data?.cart?.deliveryGroups?.nodes;
+          if (deferred) groups = deferred;
+        }
+      }
+      return groups;
+    }
+
+    async queryStorefront(query, variables, signal) {
+      const response = await fetch(API_PATH, {
+        method: 'POST',
+        credentials: 'omit',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'multipart/mixed, application/json'
+        },
+        body: JSON.stringify({ query, variables }),
+        signal
+      });
+      if (!response.ok) throw new Error('Storefront API HTTP ' + response.status);
+      const content = await response.text();
+      const type = response.headers.get('content-type') || '';
+      if (!type.toLowerCase().includes('multipart/mixed')) {
+        return [JSON.parse(content)];
+      }
+      const boundaryMatch = type.match(/boundary="?([^";\s]+)"?/i);
+      if (!boundaryMatch) throw new Error('Missing GraphQL multipart boundary');
+      const boundary = '--' + boundaryMatch[1];
+      const packets = [];
+      for (const part of content.split(boundary)) {
+        const separator = /\r?\n\r?\n/.exec(part);
+        if (!separator) continue;
+        const json = part.slice(separator.index + separator[0].length).trim();
+        if (json && json !== '--') packets.push(JSON.parse(json));
+      }
+      if (!packets.length) throw new Error('No GraphQL multipart response');
+      return packets;
+    }
+
     async calculate() {
       const zip = this.zipInput.value.trim();
       if (!/^\d{5}$/.test(zip)) {
@@ -132,20 +227,25 @@
       };
 
       try {
-        const response = await fetch(API_PATH, {
-          method: 'POST',
-          credentials: 'omit',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: MUTATION, variables: { input } }),
-          signal: controller.signal
-        });
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const body = await response.json();
-        if (body.errors?.length || body.data?.cartCreate?.userErrors?.length) {
-          throw new Error('Storefront API rejected shipping quote');
+        let groups = await this.quoteForDestination(input, controller.signal);
+
+        // Some carriers require city + state, not just a ZIP. Attempt an
+        // additional quote with a public ZIP-to-city lookup, never with a
+        // fabricated street address.
+        if (!this.hasRates(groups)) {
+          const location = await this.lookupZip(zip, controller.signal);
+          if (location) {
+            input.delivery.addresses[0].address.deliveryAddress = {
+              countryCode: 'US',
+              zip,
+              city: location.city,
+              provinceCode: location.state
+            };
+            groups = await this.quoteForDestination(input, controller.signal);
+          }
         }
+
         if (this._pending !== controller) return;
-        const groups = body.data?.cartCreate?.cart?.deliveryGroups?.nodes || [];
         this.renderOptions(groups);
       } catch (error) {
         if (error.name !== 'AbortError' && this._pending === controller) {

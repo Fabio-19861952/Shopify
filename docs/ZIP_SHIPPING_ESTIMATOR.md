@@ -18,8 +18,9 @@ This product-page widget uses the tokenless Shopify Storefront Cart API to reque
 ## Privacy and implementation
 - Endpoint: /api/2026-07/graphql.json on the same store domain; Shopify supports tokenless Cart read/write.
 - No Admin API token or private secret is stored in GitHub or the theme.
+- The Collective Carrier Service requires Cart.deliveryGroups(withCarrierRates: true) in an @defer fragment; the widget performs cartCreate then cart query, parsing the multipart/mixed incremental payload.
 - Creates a separate disposable Storefront API cart with country US and the selected 5-digit ZIP.
-- The ZIP is sent only to Shopify, not to GitHub or an external geocoding provider.
+- The ZIP is sent to Shopify. Only if the initial quote has no shipping options, the widget sends the five-digit ZIP (without a name or street address) to public service Zippopotam.us to resolve city and state for a second attempt. No ZIP is sent to GitHub.
 - Reads the currently selected variant from Horizon buy-buttons input[name=id] at click time.
 - Displays carrier-calculated options; does not invent prices or create a weighted average.
 - If ZIP is insufficient to calculate a rate, customers are directed to enter their full address at checkout.
@@ -36,3 +37,8 @@ Shopify references:
 https://shopify.dev/docs/api/storefront/2026-07/mutations/cartCreate
 https://shopify.dev/docs/api/storefront/2026-07/objects/CartDeliveryGroup
 https://shopify.dev/docs/api/storefront/2026-07/objects/CartDeliveryOption
+## Troubleshooting / fix Oct 16, 2026
+- Initial version used deliveryGroups without withCarrierRates, which omits carrier-calculated rates and caused ZIP 10001 to show no options.
+- Patched to use an @defer fragment for calculated carrier rates and parse streamed multipart/mixed GraphQL responses.
+- A mock multipart response test passed, but a real-browser cross-check remains required before publication.
+- Zippopotam.us fallback runs only when the first Shopify request returns no rates. It sends only the ZIP Code; see https://api.zippopotam.us/.

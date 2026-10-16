@@ -41,10 +41,26 @@
         event.preventDefault();
         this.calculate();
       });
+
+      // A previous estimate must not remain visible after the buyer changes
+      // the active size/color. Horizon updates its variant ID asynchronously.
+      this._productScope = this.closest('.product-details') || this.closest('section') || document;
+      this._onVariantChange = (event) => {
+        if (!event.target?.closest?.('variant-picker')) return;
+        if (this._pending) {
+          this._pending.abort();
+          this._pending = null;
+          this.submitButton.disabled = false;
+        }
+        this.results.replaceChildren();
+        this.status.textContent = 'Product option changed. Check shipping again for the updated estimate.';
+      };
+      this._productScope.addEventListener('change', this._onVariantChange);
     }
 
     disconnectedCallback() {
       if (this._pending) this._pending.abort();
+      this._productScope?.removeEventListener('change', this._onVariantChange);
     }
 
     currentVariantId() {

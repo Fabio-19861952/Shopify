@@ -1,0 +1,76 @@
+{% comment %}
+  Pet Hub Shop — optional shipping quote by ZIP code.
+  This block is added under the existing buy-buttons block in templates/product.json.
+  Uses a separate Storefront API cart, never the buyer's live cart.
+{% endcomment %}
+{% if closest.product != blank %}
+  <ph-shipping-estimator
+    class="ph-shipping"
+    data-initial-variant-id="{{ closest.product.selected_or_first_available_variant.id }}"
+    {{ block.shopify_attributes }}
+  >
+    <form data-ph-quote-form>
+      <label class="ph-shipping__label" for="ph-shipping-zip-{{ block.id }}">
+        Check shipping to your ZIP Code
+      </label>
+      <div class="ph-shipping__row">
+        <input
+          id="ph-shipping-zip-{{ block.id }}"
+          data-ph-zip
+          class="ph-shipping__input"
+          type="text"
+          inputmode="numeric"
+          autocomplete="postal-code"
+          pattern="[0-9]{5}"
+          maxlength="5"
+          placeholder="e.g. 10001"
+          aria-label="5-digit US ZIP Code"
+          required
+        >
+        <button class="ph-shipping__button" type="submit" data-ph-submit>
+          Check shipping
+        </button>
+      </div>
+    </form>
+    <p class="ph-shipping__status" data-ph-status role="status" aria-live="polite"></p>
+    <div data-ph-results class="ph-shipping__results"></div>
+  </ph-shipping-estimator>
+  <script src="{{ 'ph-shipping-estimator.js' | asset_url }}" defer></script>
+{% endif %}
+
+{% stylesheet %}
+  .ph-shipping { display: block; width: 100%; margin-block: 8px 18px; font-size: 0.95rem; }
+  .ph-shipping__label { display: block; font-weight: 600; margin-bottom: 8px; }
+  .ph-shipping__row { display: flex; align-items: stretch; gap: 8px; }
+  .ph-shipping__input {
+    flex: 1 1 110px; min-width: 0; width: 100%;
+    border: 1px solid rgb(var(--color-foreground-rgb) / 0.3);
+    border-radius: 5px; padding: 10px 12px; background: var(--color-background);
+    color: var(--color-foreground); font: inherit;
+  }
+  .ph-shipping__button {
+    padding: 10px 14px; min-height: 44px; border-radius: 5px;
+    background: var(--color-foreground); color: var(--color-background);
+    font: inherit; font-weight: 600; cursor: pointer; border: none;
+  }
+  .ph-shipping__button:disabled { opacity: 0.55; cursor: wait; }
+  .ph-shipping__status { margin: 10px 0 0; }
+  .ph-shipping__status:empty { display: none; }
+  .ph-shipping__group-label { font-weight: 600; margin: 12px 0 4px; }
+  .ph-shipping__rates { margin: 8px 0 0; padding: 0; list-style: none; }
+  .ph-shipping__rates li {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 7px 0; border-bottom: 1px solid rgb(var(--color-foreground-rgb) / 0.12);
+  }
+  .ph-shipping__note { color: rgb(var(--color-foreground-rgb) / 0.72); font-size: 0.85em; margin-top: 10px; }
+  @media (max-width: 390px) { .ph-shipping__row { flex-wrap: wrap; } .ph-shipping__button { flex: 1 1 auto; } }
+{% endstylesheet %}
+
+{% schema %}
+{
+  "name": "ZIP shipping estimate",
+  "tag": null,
+  "settings": [],
+  "presets": [{ "name": "ZIP shipping estimate", "category": "Product" }]
+}
+{% endschema %}
